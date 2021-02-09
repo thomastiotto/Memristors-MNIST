@@ -16,8 +16,8 @@ import numpy as np
 import tensorflow as tf
 
 from nengo.utils.matplotlib import rasterplot
-from memristor_nengo.extras import *
-from memristor_nengo.neurons import *
+from extras import *
+from neurons import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument( "-S", "--train_samples", default=None, type=int,
