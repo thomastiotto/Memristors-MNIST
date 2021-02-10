@@ -8,8 +8,8 @@ import tensorflow as tf
 import nengo_dl
 from matplotlib.ticker import MultipleLocator
 from nengo.utils.matplotlib import rasterplot
-from memristor_nengo.extras import *
-from memristor_nengo.neurons import *
+from extras import *
+from neurons import *
 from nengo import AdaptiveLIF
 
 dir_name, dir_images, dir_data = make_timestamped_dir( root="../data/MNIST/" )
@@ -104,7 +104,7 @@ print( "Pre:\n\t", pre.neuron_type )
 print( "Post:\n\t", post.neuron_type )
 print( "Rule:\n\t", conn.learning_rule_type )
 
-with nengo.Simulator( model ) as sim:
+with nengo_dl.Simulator( model ) as sim:
     sim.run( sim_time )
 
 major_ticks = np.arange( 0,
