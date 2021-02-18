@@ -1,13 +1,13 @@
 import nengo
 import numpy as np
 from extras import *
-from learning_rules import mOja, mPES
+from learning_rules import *
 from neurons import AdaptiveLIFLateralInhibition
 
-seed = None
+seed = 4
 np.random.seed( seed )
 beta = 1
-neurons = 20
+neurons = 4
 time = 10
 
 train_neurons = np.random.randint( 2, size=neurons )
@@ -36,9 +36,22 @@ with model:
 
     ens_probe = nengo.Probe( ens.neurons )
     weight_probe = nengo.Probe( conn, "weights" )
+    pos_memr_probe = nengo.Probe( conn.learning_rule, "pos_memristors" )
+    neg_memr_probe = nengo.Probe( conn.learning_rule, "neg_memristors" )
 
 with nengo.Simulator( model, seed=seed ) as sim:
-    sim.run( time )
+    # training
+    sim.run( time / 2 )
+    
+    # conn.learning_rule_type = mOja( gain=1e6, beta=beta, noisy=0, learning_rate=0 )
+    modify_learning_rate( sim, conn, SimmOja, new_lr=0 )
+    
+    # testing
+    sim.run( time / 2 )
+
+# sim.data = combine_probes( [ sim, sim_test ] )
+# sim.trange() = combine_tranges( [ sim, sim_test ] )
+
 
 fig1 = neural_activity_plot( sim.data[ ens_probe ], sim.trange() )
 fig1.show()
@@ -49,6 +62,18 @@ fig2.show()
 print()
 print( sim.data[ weight_probe ][ -1 ] )
 
+plotter = Plotter( sim.trange(), ens.n_neurons, ens.n_neurons, 1,
+                   time / 2,
+                   0.001,
+                   plot_size=(13, 7),
+                   dpi=300,
+                   pre_alpha=0.3
+                   )
+plotter.plot_weights_over_time( sim.data[ pos_memr_probe ], sim.data[ neg_memr_probe ], plot_all=True ).show()
+plotter.plot_values_over_time( sim.data[ pos_memr_probe ], sim.data[ neg_memr_probe ],
+                               value="conductance", plot_all=True ).show()
+
+print( "Classification accuracy:" )
 avg_act = np.mean( sim.data[ ens_probe ][ int( time / sim.dt / 2 ): ], axis=0 )
 count = neurons
 for i, (neur, act) in enumerate( zip( train_neurons, avg_act ) ):
