@@ -18,6 +18,8 @@ import tensorflow as tf
 from nengo.utils.matplotlib import rasterplot
 from extras import *
 from neurons import *
+from learning_rules import mOja
+from nengo.learning_rules import Oja
 
 parser = argparse.ArgumentParser()
 parser.add_argument( "-S", "--train_samples", default=None, type=int,
@@ -26,6 +28,7 @@ parser.add_argument( "-D", "--digits", nargs="*", default=None, action="store", 
                      help="The digits to train on.  Default is all digits" )
 parser.add_argument( "-N", "--neurons", default=20, type=int,
                      help="The number of excitatory neurons.  Default is 20" )
+parser.add_argument( "--learning_rule", default="mOja", type=str, choices=[ "Oja", "mOja" ] )
 parser.add_argument( "--learning_rate", default=1e-6, type=float,
                      help="Learning rate in Oja.  Default is 1e-6" )
 parser.add_argument( "--beta", default=1, type=float,
@@ -74,14 +77,22 @@ test_labels = test_labels[ :, None, None ]
 
 train_test_proportion = train_images.shape[ 0 ] / test_images.shape[ 0 ]
 
-# inp = pyip.inputNum( prompt=f"Number of samples (current {args.train_samples}):", blank=True )
-# if inp:
-#     args.train_samples = inp
-# inp = pyip.inputNum( prompt=f"Number of neurons (current {args.neurons}):", blank=True )
-# if inp:
-#     args.neurons = inp
+inp = pyip.inputNum( prompt=f"Number of samples (current {args.train_samples}):", blank=True )
+if inp:
+    args.train_samples = inp
+inp = pyip.inputNum( prompt=f"Number of neurons (current {args.neurons}):", blank=True )
+if inp:
+    args.neurons = inp
 
 # set parameters
+args.gain = 1e7
+args.voltage = 1e-1
+args.noisy = 0.01
+if args.learning_rule == "Oja":
+    lr_train = Oja( learning_rate=args.learning_rate, beta=args.beta )
+if args.learning_rule == "mOja":
+    lr_train = mOja( voltage=args.voltage, beta=args.beta, gain=args.gain, noisy=args.noisy )
+
 random.seed = args.seed
 presentation_time = 0.35
 
@@ -107,10 +118,10 @@ if args.train_samples:
 num_train_samples = train_images.shape[ 0 ]
 num_test_samples = test_images.shape[ 0 ]
 dt = 0.001
-sample_every = 100 * dt
+sample_every = dt
 sim_train_time = (presentation_time) * train_images.shape[ 0 ]
 sim_test_time = (presentation_time) * test_images.shape[ 0 ]
-sample_every_weights = sim_train_time / args.video_samples if args.video else sim_train_time
+sample_every_weights = sim_train_time / args.video_samples if args.video else sim_train_time / 100
 
 print( "######################################################",
        "###################### DEFINITION ####################",
@@ -153,16 +164,23 @@ with model:
     
     conn = nengo.Connection( pre.neurons, post.neurons,
                              learning_rule_type=
-                             nengo.learning_rules.Oja( learning_rate=args.learning_rate, beta=args.beta ),
+                             lr_train,
                              # transform=np.random.random( (post.n_neurons, pre.n_neurons) )
-                             transform=np.random.normal( 0.5, 0.25, (post.n_neurons, pre.n_neurons) )
+                             # transform=np.random.normal( 0.5, 0.25, (post.n_neurons, pre.n_neurons) ),
+                             transform=np.random.normal( 0, 0.25, (post.n_neurons, pre.n_neurons) ),
+                             # transform=np.zeros( (post.n_neurons, pre.n_neurons) )
                              )
-    
+
     pre_value_probe = nengo.Probe( pre )
     pre_probe = nengo.Probe( pre.neurons, sample_every=sample_every )
     post_probe = nengo.Probe( post.neurons, sample_every=dt )
     weight_probe = nengo.Probe( conn, "weights", sample_every=sample_every_weights )
     adaptation_probe = nengo.Probe( post.neurons, "adaptation", sample_every=sim_train_time )
+
+    # need to be removed when doing more than training phase
+    if isinstance( lr_train, mOja ):
+        pos_memr_probe = nengo.Probe( conn.learning_rule, "pos_memristors", sample_every=sample_every_weights )
+        neg_memr_probe = nengo.Probe( conn.learning_rule, "neg_memristors", sample_every=sample_every_weights )
 
 un_train, cnt_train = np.unique( train_labels, return_counts=True )
 un_test, cnt_test = np.unique( test_labels, return_counts=True )
@@ -246,7 +264,7 @@ if args.level >= 1:
                                        xycoords='figure fraction', ha='center',
                                        fontsize=20
                                        )
-        fig1.show()
+        # fig1.show()
         
         fig2, ax = plt.subplots( figsize=(12.8, 7.2), dpi=100 )
         rasterplot( sim_train.trange( sample_every=dt ), sim_train.data[ post_probe ], ax )
@@ -257,16 +275,36 @@ if args.level >= 1:
                                        fontsize=20
                                        )
         fig2.show()
-        
+
         # TODO sample neurons if too many to show
         fig3 = heatmap_onestep( sim_train.data[ weight_probe ], t=-1 )
         fig3.show()
-        
-        fig1.savefig( dir_name + "pre." + args.img_format )
+
+        fig4, ax = plt.subplots( figsize=(12.8, 7.2), dpi=100 )
+        ax.plot( np.mean( sim_train.data[ weight_probe ][ : ], axis=2 ) )
+        ax.annotate( f"Variance: {np.mean( np.mean( np.var( sim_train.data[ weight_probe ][ : ], axis=2 ), axis=0 ) )}",
+                     xy=(0.5, -0.1),
+                     xycoords="axes fraction" )
+        ax.set_title( "Weights average per neuron" )
+        # fig4.show()
+
+        for n in range( post.n_neurons ):
+            fig5, ax = plt.subplots( 1, 1 )
+            ax.plot( sim_train.trange( sample_every_weights ), sim_train.data[ weight_probe ][ :, n ], c="g" )
+            ax.annotate( f"Std. dev.: {np.mean( np.std( sim_train.data[ weight_probe ][ -1, n ], axis=0 ) )}",
+                         xy=(0.5, -0.1),
+                         xycoords="axes fraction" )
+            ax.set_title( f"Weights trajectory for neuron {n}" )
+            fig5.savefig( dir_name + f"weights_trajectory_{n}." + args.img_format )
+            fig5.show()
+
+        # fig1.savefig( dir_name + "pre." + args.img_format )
         fig2.savefig( dir_name + "post." + args.img_format )
         fig3.savefig( dir_name + "weights." + args.img_format )
+        fig4.savefig( dir_name + "weights_average." + args.img_format )
+
         print( f"Saved plots in {dir_name}" )
-    
+
     if args.video:
         # generate heatmap evolution video in a new process
         if __name__ == "__main__":
@@ -275,14 +313,28 @@ if args.level >= 1:
                             args=(sim_train.data[ weight_probe ], dir_name, sample_every_weights) )
             p.start()
 
+print( "Max initial weights", np.max( sim_train.data[ weight_probe ][ 0 ] ), "at",
+       np.argmax( sim_train.data[ weight_probe ][ 0 ] ) )
+print( "Max final weights", np.max( sim_train.data[ weight_probe ][ -1 ] ), "at",
+       np.argmax( sim_train.data[ weight_probe ][ -1 ] ) )
+print( "Min initial weights", np.min( sim_train.data[ weight_probe ][ 0 ] ), "at",
+       np.argmin( sim_train.data[ weight_probe ][ 0 ] ) )
+print( "Min final weights", np.min( sim_train.data[ weight_probe ][ -1 ] ), "at",
+       np.argmin( sim_train.data[ weight_probe ][ -1 ] ) )
+
 if args.level >= 2:
     print( "######################################################",
            "################### CLASS ASSIGNMENT #################",
            "######################################################",
            sep="\n" )
     # load weights found during training and freeze them
-    conn.transform = sim_train.data[ weight_probe ][ -1 ].squeeze()
-    conn.learning_rule_type = nengo.learning_rules.Oja( learning_rate=0 )
+    if args.learning_rule == "Oja":
+        lr_class = Oja( learning_rate=0 )
+        conn.transform = sim_train.data[ weight_probe ][ -1 ].squeeze()
+    if args.learning_rule == "mOja":
+        lr_class = mOja( voltage=0, beta=args.beta, gain=args.gain, noisy=args.noisy,
+                         initial_state={ "weights": sim_train.data[ weight_probe ][ -1 ].squeeze() } )
+    conn.learning_rule_type = lr_class
     # load last neuron thresholds from training and freeze them
     post.neuron_type = AdaptiveLIFLateralInhibition(
             tau_n=float( "inf" ),
