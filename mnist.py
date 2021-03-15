@@ -47,8 +47,8 @@ parser.add_argument( "-b", "--backend", default="nengo_core",
                      choices=[ "nengo_dl", "nengo_core" ] )
 parser.add_argument( "-d", "--device", default="/cpu:0",
                      help="/cpu:0 or /gpu:[x]" )
-parser.add_argument( "-pd", "--plots_directory", default="../data/MNIST/",
-                     help="Directory where plots will be saved.  Default is ../data/" )
+parser.add_argument( "-pd", "--plots-directory", default="../data/MNIST/",
+                     help="Directory where plots will be saved.  Default is ../data" )
 parser.add_argument( '--video', dest='video', default=False, action='store_true',
                      help="Generate a video of the weight evolution.  Default is False." )
 parser.add_argument( '--no-images', dest='images', default=True, action='store_false',
@@ -77,12 +77,12 @@ test_labels = test_labels[ :, None, None ]
 
 train_test_proportion = train_images.shape[ 0 ] / test_images.shape[ 0 ]
 
-inp = pyip.inputNum( prompt=f"Number of samples (current {args.train_samples}):", blank=True )
-if inp:
-    args.train_samples = inp
-inp = pyip.inputNum( prompt=f"Number of neurons (current {args.neurons}):", blank=True )
-if inp:
-    args.neurons = inp
+# inp = pyip.inputNum( prompt=f"Number of samples (current {args.train_samples}):", blank=True )
+# if inp:
+#     args.train_samples = inp
+# inp = pyip.inputNum( prompt=f"Number of neurons (current {args.neurons}):", blank=True )
+# if inp:
+#     args.neurons = inp
 
 # set parameters
 args.gain = 1e7
@@ -93,6 +93,7 @@ if args.learning_rule == "Oja":
 if args.learning_rule == "mOja":
     lr_train = mOja( voltage=args.voltage, beta=args.beta, gain=args.gain, noisy=args.noisy )
 
+simulation_loops = 10
 random.seed = args.seed
 presentation_time = 0.35
 
@@ -178,7 +179,7 @@ with model:
     adaptation_probe = nengo.Probe( post.neurons, "adaptation", sample_every=sim_train_time )
 
     # need to be removed when doing more than training phase
-    if isinstance( lr_train, mOja ):
+    if isinstance( lr_train, mOja ) and args.level <= 1:
         pos_memr_probe = nengo.Probe( conn.learning_rule, "pos_memristors", sample_every=sample_every_weights )
         neg_memr_probe = nengo.Probe( conn.learning_rule, "neg_memristors", sample_every=sample_every_weights )
 
@@ -254,10 +255,11 @@ if args.level >= 1:
             f.write( f"{line}\n" )
         f.write( f"Total: {np.sum( num_spikes_train )}\n" )
         f.write( f"Normalised standard dev.: {np.std( num_spikes_train ) / np.mean( num_spikes_train )}\n" )
-    
+
     if args.images:
+        # slice or really slow generating images
         fig1, ax = plt.subplots( figsize=(12.8, 7.2), dpi=100 )
-        rasterplot( sim_train.trange( sample_every=sample_every ), sim_train.data[ pre_probe ], ax )
+        rasterplot( sim_train.trange( sample_every=1000 * dt ), sim_train.data[ pre_probe ][ ::1000 ], ax )
         ax.set_ylabel( 'Neuron' )
         ax.set_xlabel( 'Time (s)' )
         fig1.get_axes()[ 0 ].annotate( "Pre" + " neural activity", (0.5, 0.94),
@@ -265,9 +267,9 @@ if args.level >= 1:
                                        fontsize=20
                                        )
         # fig1.show()
-        
+    
         fig2, ax = plt.subplots( figsize=(12.8, 7.2), dpi=100 )
-        rasterplot( sim_train.trange( sample_every=dt ), sim_train.data[ post_probe ], ax )
+        rasterplot( sim_train.trange( sample_every=10 * dt ), sim_train.data[ post_probe ][ ::10 ], ax )
         ax.set_ylabel( 'Neuron' )
         ax.set_xlabel( 'Time (s)' )
         fig2.get_axes()[ 0 ].annotate( "Post" + " neural activity", (0.5, 0.94),
@@ -275,7 +277,7 @@ if args.level >= 1:
                                        fontsize=20
                                        )
         fig2.show()
-
+    
         # TODO sample neurons if too many to show
         fig3 = heatmap_onestep( sim_train.data[ weight_probe ], t=-1 )
         fig3.show()
@@ -287,7 +289,7 @@ if args.level >= 1:
                      xycoords="axes fraction" )
         ax.set_title( "Weights average per neuron" )
         # fig4.show()
-
+    
         for n in range( post.n_neurons ):
             fig5, ax = plt.subplots( 1, 1 )
             ax.plot( sim_train.trange( sample_every_weights ), sim_train.data[ weight_probe ][ :, n ], c="g" )
@@ -297,12 +299,20 @@ if args.level >= 1:
             ax.set_title( f"Weights trajectory for neuron {n}" )
             fig5.savefig( dir_name + f"weights_trajectory_{n}." + args.img_format )
             fig5.show()
-
-        # fig1.savefig( dir_name + "pre." + args.img_format )
+    
+        fig6, ax = plt.subplots( 1, 1 )
+        ax.matshow( np.count_nonzero( sim_train.data[ pre_probe ], axis=0 ).reshape( 28, 28 ) )
+        for i, l in enumerate( np.argmax( sim_train.data[ weight_probe ][ -1 ], axis=1 ) ):
+            ax.text( np.unravel_index( l, (28, 28) )[ 0 ], np.unravel_index( l, (28, 28) )[ 1 ], f"{i}:{l}" )
+        ax.set_title( f"Highest weight per neuron vs pre-synaptic activation" )
+        fig6.show()
+    
+        fig1.savefig( dir_name + "pre." + args.img_format )
         fig2.savefig( dir_name + "post." + args.img_format )
         fig3.savefig( dir_name + "weights." + args.img_format )
         fig4.savefig( dir_name + "weights_average." + args.img_format )
-
+        fig6.savefig( dir_name + "pre_vs_neur." + args.img_format )
+    
         print( f"Saved plots in {dir_name}" )
 
     if args.video:
@@ -313,14 +323,14 @@ if args.level >= 1:
                             args=(sim_train.data[ weight_probe ], dir_name, sample_every_weights) )
             p.start()
 
-print( "Max initial weights", np.max( sim_train.data[ weight_probe ][ 0 ] ), "at",
-       np.argmax( sim_train.data[ weight_probe ][ 0 ] ) )
-print( "Max final weights", np.max( sim_train.data[ weight_probe ][ -1 ] ), "at",
-       np.argmax( sim_train.data[ weight_probe ][ -1 ] ) )
-print( "Min initial weights", np.min( sim_train.data[ weight_probe ][ 0 ] ), "at",
-       np.argmin( sim_train.data[ weight_probe ][ 0 ] ) )
-print( "Min final weights", np.min( sim_train.data[ weight_probe ][ -1 ] ), "at",
-       np.argmin( sim_train.data[ weight_probe ][ -1 ] ) )
+# print( "Max initial weights", np.max( sim_train.data[ weight_probe ][ 0 ] ), "at",
+#        np.argmax( sim_train.data[ weight_probe ][ 0 ] ) )
+# print( "Max final weights", np.max( sim_train.data[ weight_probe ][ -1 ] ), "at",
+#        np.argmax( sim_train.data[ weight_probe ][ -1 ] ) )
+# print( "Min initial weights", np.min( sim_train.data[ weight_probe ][ 0 ] ), "at",
+#        np.argmin( sim_train.data[ weight_probe ][ 0 ] ) )
+# print( "Min final weights", np.min( sim_train.data[ weight_probe ][ -1 ] ), "at",
+#        np.argmin( sim_train.data[ weight_probe ][ -1 ] ) )
 
 if args.level >= 2:
     print( "######################################################",
@@ -332,6 +342,7 @@ if args.level >= 2:
         lr_class = Oja( learning_rate=0 )
         conn.transform = sim_train.data[ weight_probe ][ -1 ].squeeze()
     if args.learning_rule == "mOja":
+        # TODO voltage=0 is a hack
         lr_class = mOja( voltage=0, beta=args.beta, gain=args.gain, noisy=args.noisy,
                          initial_state={ "weights": sim_train.data[ weight_probe ][ -1 ].squeeze() } )
     conn.learning_rule_type = lr_class
@@ -352,6 +363,9 @@ if args.level >= 2:
     if args.backend == "nengo_dl":
         with nengo_dl.Simulator( model, seed=args.seed, device=args.device ) as sim_class:
             sim_class.run( sim_train_time )
+    
+    # weights should not change during classification
+    assert np.array_equal( sim_train.data[ weight_probe ][ -1 ], sim_class.data[ weight_probe ][ -1 ] )
     
     # print number of recorded spikes
     num_spikes_class = np.sum( sim_class.data[ post_probe ] > 0, axis=0 )
